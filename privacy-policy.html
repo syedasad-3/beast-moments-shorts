@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — BeastMomentsShorts</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #222; }
+  h1 { font-size: 1.8em; margin-bottom: 0.2em; }
+  h2 { font-size: 1.25em; margin-top: 1.8em; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
+  .updated { color: #666; font-size: 0.9em; margin-bottom: 2em; }
+  ul { padding-left: 1.3em; }
+  code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; font-size: 0.9em; }
+  footer { margin-top: 3em; color: #666; font-size: 0.9em; }
+</style>
+</head>
+<body>
+
+<h1>Privacy Policy</h1>
+<p class="updated">Effective date: August 25, 2026</p>
+
+<p>This privacy policy explains how <strong>BeastMomentsShorts</strong> ("the application," "we," "our") accesses, uses, and protects data when it connects to your Google account via Google OAuth. This application is operated as a personal automation project and is not a commercial product.</p>
+
+<h2>1. What the application does</h2>
+<p>BeastMomentsShorts is an automated pipeline that processes video content and publishes short-form videos to a YouTube channel on behalf of its operator. It runs on a schedule using Google Cloud APIs.</p>
+
+<h2>2. Google user data we access</h2>
+<p>The application requests the following Google OAuth scopes, and no others:</p>
+<ul>
+  <li><code>https://www.googleapis.com/auth/drive.file</code> — access only to files this application creates or that the user explicitly opens with it in Google Drive. The application cannot see, list, or modify any other files in the user's Drive.</li>
+  <li><code>https://www.googleapis.com/auth/youtube.readonly</code> — read-only access to check the operator's YouTube channel and video metadata (e.g., to avoid duplicate uploads).</li>
+  <li><code>https://www.googleapis.com/auth/youtube.upload</code> — used solely to upload finished video files to the operator's own YouTube channel.</li>
+  <li><code>https://www.googleapis.com/auth/yt-analytics.readonly</code> — read-only access to view performance metrics (views, watch time) for videos uploaded by this application.</li>
+</ul>
+
+<h2>3. How the data is used</h2>
+<p>Data accessed through these scopes is used exclusively to:</p>
+<ul>
+  <li>Retrieve source video files that the operator has placed in a designated Google Drive folder.</li>
+  <li>Upload processed short-form videos to the operator's own YouTube channel.</li>
+  <li>Check whether a video has already been processed, to avoid duplicate publishing.</li>
+  <li>Retrieve basic performance analytics for videos this application has uploaded.</li>
+</ul>
+<p>No data obtained through these scopes is sold, rented, or shared with any third party. No data is used for advertising purposes.</p>
+
+<h2>4. Data storage and retention</h2>
+<p>OAuth tokens are stored as encrypted secrets within GitHub Actions (a private secrets store, not visible in source code or logs) and are used only by the automated pipeline. Video files retrieved from Drive are processed temporarily during each automation run and are not retained beyond what is needed to complete the run and are periodically deleted from Drive as part of routine storage cleanup.</p>
+
+<h2>5. Third-party services used</h2>
+<p>Parts of the video-processing pipeline (transcription, content analysis, text-to-speech) may use third-party AI service providers. Only the video/audio content itself is sent to these providers for processing — no Google account data, credentials, or personal identifying information is shared with them.</p>
+
+<h2>6. Data security</h2>
+<p>All credentials (OAuth client secrets, API keys, refresh tokens) are stored using GitHub's encrypted Secrets mechanism and are never committed to source code or exposed in logs.</p>
+
+<h2>7. Revoking access</h2>
+<p>The Google account owner can revoke this application's access at any time via <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account → Security → Third-party access</a>.</p>
+
+<h2>8. Changes to this policy</h2>
+<p>This policy may be updated periodically. Material changes will be reflected on this page with an updated effective date.</p>
+
+<h2>9. Contact</h2>
+<p>For questions about this policy, contact the application operator via the email associated with the GitHub repository for this project.</p>
+
+<footer>
+  <p>This is a personal/non-commercial automation project. This policy is provided to satisfy Google API Services User Data Policy requirements for OAuth verification.</p>
+</footer>
+
+</body>
+</html>
