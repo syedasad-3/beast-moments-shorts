@@ -1,0 +1,45 @@
+name: Scout and Monitor
+
+# SECURITY: only schedule and manual dispatch — never pull_request or
+# pull_request_target, which would expose secrets to fork PRs.
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 03:00 UTC = 8:00 AM PKT (Pakistan has no DST)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write  # needed to commit state/ changes back to the repo
+
+jobs:
+  scout-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install google-api-python-client
+
+      - name: Run Scout + Monitor
+        env:
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          DRIVE_INCOMING_FOLDER_ID: ${{ secrets.DRIVE_INCOMING_FOLDER_ID }}
+        run: python scripts/scout_monitor.py
+
+      - name: Commit state changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state/
+          git diff --staged --quiet || git commit -m "Update pipeline state [skip ci]"
+          git push
