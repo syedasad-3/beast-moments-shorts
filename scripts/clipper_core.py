@@ -660,10 +660,23 @@ def process_one_video(drive_service, drive_file, queued_entry):
             return False  # error already logged
 
         # Extract audio for transcription (smaller upload to Groq than the full video).
-        extract_cmd = ["ffmpeg", "-y", "-i", raw_path, "-map", "0:a:0", "-c:a", "aac", "-b:a", "128k", audio_path]
+        # 32kbps mono is plenty for speech transcription (not the final output
+        # audio quality) and keeps even long videos safely under Groq's free-tier
+        # 25MB per-file limit: a 60-minute video at 32kbps mono is ~14MB.
+        extract_cmd = ["ffmpeg", "-y", "-i", raw_path, "-map", "0:a:0",
+                        "-ac", "1", "-c:a", "aac", "-b:a", "32k", audio_path]
         result = subprocess.run(extract_cmd, capture_output=True, text=True, timeout=300)
         if result.returncode != 0 or not os.path.exists(audio_path):
             log_pipeline_error("ERR_AUDIO_EXTRACT_FAIL", "process_video", result.stderr[-500:])
+            return False
+
+        audio_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+        if audio_size_mb > 24:  # stay safely under Groq's 25MB free-tier limit
+            log_pipeline_error(
+                "ERR_AUDIO_TOO_LARGE_FOR_TRANSCRIPTION", "process_video",
+                f"Extracted audio is {audio_size_mb:.1f}MB, exceeds Groq's 25MB free-tier limit. "
+                f"Video is likely too long for single-request transcription; chunking not yet implemented.",
+            )
             return False
 
         transcript = transcribe_audio(audio_path)
