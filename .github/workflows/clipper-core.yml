@@ -40,9 +40,7 @@ jobs:
       - name: Run Clipper Core
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           DRIVE_INCOMING_FOLDER_ID: ${{ secrets.DRIVE_INCOMING_FOLDER_ID }}
           DRIVE_PROCESSED_FOLDER_ID: ${{ secrets.DRIVE_PROCESSED_FOLDER_ID }}
           DRIVE_OUTPUT_FOLDER_ID: ${{ secrets.DRIVE_OUTPUT_FOLDER_ID }}
