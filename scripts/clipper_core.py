@@ -183,7 +183,7 @@ Respond ONLY with valid JSON, no other text, in this exact format:
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": "openai/gpt-oss-120b",  # llama-3.3-70b-versatile was deprecated by Groq (June 2026)
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
                 "response_format": {"type": "json_object"},
