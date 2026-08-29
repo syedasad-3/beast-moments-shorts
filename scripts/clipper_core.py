@@ -496,31 +496,33 @@ def extract_audio_track(video_path, audio_stream_index, output_path):
 # ---------------------------------------------------------------------------
 
 def get_drive_credentials():
-    from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
+    """Uses a Service Account (not user OAuth) for Drive access. This
+    avoids the drive.file scope's fundamental limitation — it can only
+    see files the app itself created, never files a human manually
+    uploaded via the Drive website. Service accounts are granted access
+    by explicitly sharing folders with them, which sidesteps that
+    restriction entirely and needs no OAuth consent-screen verification."""
+    from google.oauth2 import service_account
 
-    client_id = os.environ.get("GOOGLE_CLIENT_ID")
-    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
-    refresh_token = os.environ.get("GOOGLE_DRIVE_REFRESH_TOKEN")
-    if not (client_id and client_secret and refresh_token):
-        log_pipeline_error("ERR_MISSING_CONFIG", "drive_auth",
-                            "GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or GOOGLE_DRIVE_REFRESH_TOKEN not set.")
+    service_account_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not service_account_json:
+        log_pipeline_error("ERR_MISSING_CONFIG", "drive_auth", "GOOGLE_SERVICE_ACCOUNT_JSON not set.")
         return None
 
-    creds = Credentials(
-        token=None,
-        refresh_token=refresh_token,
-        client_id=client_id,
-        client_secret=client_secret,
-        token_uri="https://oauth2.googleapis.com/token",
-    )
+    try:
+        info = json.loads(service_account_json)
+    except json.JSONDecodeError as e:
+        log_pipeline_error("ERR_INVALID_CONFIG", "drive_auth", f"GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON: {e}")
+        return None
 
-    def _refresh():
-        creds.refresh(Request())
+    try:
+        creds = service_account.Credentials.from_service_account_info(
+            info, scopes=["https://www.googleapis.com/auth/drive"],
+        )
         return creds
-
-    result = with_retries(_refresh, "ERR_DRIVE_AUTH_FAIL", "drive_auth")
-    return result
+    except Exception as e:
+        log_pipeline_error("ERR_DRIVE_AUTH_FAIL", "drive_auth", str(e))
+        return None
 
 
 def list_incoming_files(drive_service):
