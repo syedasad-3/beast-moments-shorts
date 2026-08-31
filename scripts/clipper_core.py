@@ -140,6 +140,56 @@ def transcribe_audio(audio_path):
 # sentence boundaries so clips never start/end mid-sentence)
 # ---------------------------------------------------------------------------
 
+def merge_segments_into_blocks(segments, max_blocks=50, max_words_per_block=18):
+    """Merges Whisper's many small segments (typically 3-7s each) into
+    larger blocks before sending to the LLM. A 20-40 minute video can
+    produce 300+ raw segments — sending all of them (with full text) as
+    separate numbered lines blows past Groq's free-tier token-per-minute
+    limit in a single request (openai/gpt-oss-120b's free tier is only
+    8,000 TPM — confirmed in production as a recurring 413 error on
+    longer videos). Two things keep the prompt small regardless of video
+    length: (1) grouping into a bounded number of time-blocks, and
+    (2) truncating each block's text to a short preview, since the LLM
+    only needs enough of the dialogue to judge whether a moment is
+    exciting — not a verbatim transcript.
+
+    Block start/end times are still exact original Whisper segment
+    boundaries (real pauses), so cut-point accuracy is unaffected by the
+    text truncation — only how much of the spoken content the LLM sees
+    when deciding which blocks to pick."""
+    if not segments:
+        return []
+
+    total_duration = segments[-1]["end"] - segments[0]["start"]
+    target_block_seconds = max(15, total_duration / max_blocks)
+
+    blocks = []
+    current_start, current_end, current_texts = None, None, []
+    for seg in segments:
+        if current_start is None:
+            current_start = seg["start"]
+        current_end = seg["end"]
+        current_texts.append(seg["text"].strip())
+        if current_end - current_start >= target_block_seconds:
+            full_text = " ".join(current_texts)
+            words = full_text.split()
+            preview = " ".join(words[:max_words_per_block])
+            if len(words) > max_words_per_block:
+                preview += " ..."
+            blocks.append({"start": current_start, "end": current_end, "text": preview})
+            current_start, current_end, current_texts = None, None, []
+
+    if current_texts:  # leftover partial block at the end
+        full_text = " ".join(current_texts)
+        words = full_text.split()
+        preview = " ".join(words[:max_words_per_block])
+        if len(words) > max_words_per_block:
+            preview += " ..."
+        blocks.append({"start": current_start, "end": current_end, "text": preview})
+
+    return blocks
+
+
 def build_transcript_text_with_ids(segments):
     """Turns Whisper segments into a numbered list the LLM can reference
     by index, so we can map its picks back to exact timestamps without
@@ -150,17 +200,21 @@ def build_transcript_text_with_ids(segments):
     return "\n".join(lines)
 
 
-def pick_moments_with_llm(segments):
+def pick_moments_with_llm(raw_segments):
     """Asks Groq's LLM to pick NUM_MOMENTS engaging, self-contained moments
-    from the transcript, referencing segment indices (not free-text
+    from the transcript, referencing block indices (not free-text
     timestamps) to avoid the LLM inventing timestamps that don't exist.
+    Segments are merged into larger blocks first to stay within Groq's
+    free-tier per-request token limits on long videos.
     Returns a list of {start, end, reason} or None."""
     if not GROQ_API_KEY:
         log_pipeline_error("ERR_MISSING_CONFIG", "pick_moments", "GROQ_API_KEY not set.")
         return None
-    if not segments:
+    if not raw_segments:
         log_pipeline_error("ERR_EMPTY_TRANSCRIPT", "pick_moments", "No transcript segments to pick from.")
         return None
+
+    segments = merge_segments_into_blocks(raw_segments)
 
     transcript_text = build_transcript_text_with_ids(segments)
     prompt = f"""You are selecting clips for a YouTube Shorts channel from a MrBeast video transcript.
