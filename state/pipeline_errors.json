@@ -70,5 +70,53 @@
     "stage": "process_video",
     "message": "All render/upload attempts failed for 'Escape 100 Cops, Win $500,000'.",
     "timestamp": "2026-08-31T12:03:55.178501+00:00"
+  },
+  {
+    "error_code": "ERR_INCOMING_QUEUE_MISMATCH",
+    "stage": "pairing",
+    "message": "1 file(s) in 'incoming' but 4 'queued' entries in state. Processing what can be safely paired; the rest will be picked up next run.",
+    "timestamp": "2026-08-31T15:02:22.661820+00:00"
+  },
+  {
+    "error_code": "ERR_FACE_DETECTOR_INIT_FAIL",
+    "stage": "crop_detection",
+    "message": "libEGL.so.1: cannot open shared object file: No such file or directory",
+    "timestamp": "2026-08-31T15:03:09.111868+00:00"
+  },
+  {
+    "error_code": "ERR_DRIVE_OUTPUT_UPLOAD_FAIL",
+    "stage": "drive_output_upload",
+    "message": "All 3 attempts failed: <HttpError 403 when requesting None returned \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\". Details: \"[{'message': 'Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://sup",
+    "timestamp": "2026-08-31T15:03:40.206266+00:00"
+  },
+  {
+    "error_code": "ERR_FACE_DETECTOR_INIT_FAIL",
+    "stage": "crop_detection",
+    "message": "libEGL.so.1: cannot open shared object file: No such file or directory",
+    "timestamp": "2026-08-31T15:03:40.207085+00:00"
+  },
+  {
+    "error_code": "ERR_DRIVE_OUTPUT_UPLOAD_FAIL",
+    "stage": "drive_output_upload",
+    "message": "All 3 attempts failed: <HttpError 403 when requesting None returned \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\". Details: \"[{'message': 'Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://sup",
+    "timestamp": "2026-08-31T15:04:11.012309+00:00"
+  },
+  {
+    "error_code": "ERR_FACE_DETECTOR_INIT_FAIL",
+    "stage": "crop_detection",
+    "message": "libEGL.so.1: cannot open shared object file: No such file or directory",
+    "timestamp": "2026-08-31T15:04:11.013063+00:00"
+  },
+  {
+    "error_code": "ERR_DRIVE_OUTPUT_UPLOAD_FAIL",
+    "stage": "drive_output_upload",
+    "message": "All 3 attempts failed: <HttpError 403 when requesting None returned \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\". Details: \"[{'message': 'Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://sup",
+    "timestamp": "2026-08-31T15:04:42.181421+00:00"
+  },
+  {
+    "error_code": "ERR_NO_CLIPS_DELIVERED",
+    "stage": "process_video",
+    "message": "All render/upload attempts failed for 'Escape 100 Cops, Win $500,000'.",
+    "timestamp": "2026-08-31T15:04:42.181748+00:00"
   }
 ]
