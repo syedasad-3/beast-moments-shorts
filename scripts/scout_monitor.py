@@ -212,7 +212,10 @@ def build_email_body(new_video, errors):
         lines.append(f"  Length: ~{mins} min")
         lines.append(f"  Link: {new_video['url']}")
         lines.append("")
-        lines.append("Please download this video and upload it to the 'incoming' Drive folder:")
+        lines.append(f"IMPORTANT: after downloading, rename the file to exactly: {new_video['video_id']}.mp4")
+        lines.append("(This lets the pipeline identify which video it is, no matter what order you upload things in.)")
+        lines.append("")
+        lines.append("Then upload it to the 'incoming' Drive folder:")
         lines.append(f"  https://drive.google.com/drive/folders/{DRIVE_INCOMING_FOLDER_ID}")
         lines.append("")
     else:
