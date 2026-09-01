@@ -10,15 +10,15 @@ publish to YouTube themselves. The raw source file is then moved to
 "processed" in Drive. This pipeline never calls the YouTube API — YouTube
 publishing stays a fully manual, human step by design.
 
-Pairing raw Drive files with queued videos:
+Matching raw Drive files with queued videos:
   Scout writes an entry with status "queued" to state/processed_videos.json
-  when it emails a video link. The operator manually downloads and uploads
-  that video to Drive. This script pairs Drive files in "incoming" with
-  queued entries in upload order (oldest Drive file <-> oldest queued
-  entry). This assumes the operator uploads videos in the order Scout
-  queued them, which holds for normal single-operator use. If the counts
-  don't match, it's logged as a warning (not fatal) and only the videos
-  that can be safely paired are processed; the rest wait for next run.
+  when it emails a video link, and tells the operator to name the
+  downloaded file "{video_id}.mp4" before uploading. This script matches
+  Drive files in "incoming" to queued entries by that video ID appearing
+  in the filename — not by upload order — so it's safe even if several
+  videos are uploaded at once, in any order. A file that doesn't match a
+  recognized, still-queued video ID is left untouched and flagged rather
+  than being processed as if it were a different video.
 """
 
 import io
@@ -39,7 +39,7 @@ WORK_DIR = os.environ.get("CLIPPER_WORK_DIR", "/tmp/clipper_work")
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = [5, 15, 30]
 
-# How many short moments to try to extract per source video.
+# Default/fallback moment count if duration-based scaling can't run.
 NUM_MOMENTS = 3
 MOMENT_MIN_SECONDS = 25
 MOMENT_MAX_SECONDS = 59  # keep under YouTube Shorts' 60s cutoff with margin
@@ -200,8 +200,8 @@ def build_transcript_text_with_ids(segments):
     return "\n".join(lines)
 
 
-def pick_moments_with_llm(raw_segments):
-    """Asks Groq's LLM to pick NUM_MOMENTS engaging, self-contained moments
+def pick_moments_with_llm(raw_segments, num_moments=NUM_MOMENTS):
+    """Asks Groq's LLM to pick num_moments engaging, self-contained moments
     from the transcript, referencing block indices (not free-text
     timestamps) to avoid the LLM inventing timestamps that don't exist.
     Segments are merged into larger blocks first to stay within Groq's
@@ -218,7 +218,7 @@ def pick_moments_with_llm(raw_segments):
 
     transcript_text = build_transcript_text_with_ids(segments)
     prompt = f"""You are selecting clips for a YouTube Shorts channel from a MrBeast video transcript.
-The transcript below is numbered by segment. Pick {NUM_MOMENTS} distinct, exciting, self-contained
+The transcript below is numbered by segment. Pick {num_moments} distinct, exciting, self-contained
 moments that would work as standalone {MOMENT_MIN_SECONDS}-{MOMENT_MAX_SECONDS} second short-form clips.
 Each moment must start and end on a segment boundary (a full sentence/thought) — never pick a
 start or end segment that cuts a sentence in half.
@@ -300,6 +300,29 @@ Respond ONLY with valid JSON, no other text, in this exact format:
 # complexity/render cost of continuously re-cropping every frame. This is
 # a reasonable trade-off for fast-cut MrBeast-style footage where the
 # subject is usually roughly centered within any given shot.
+
+def get_video_duration_seconds(video_path):
+    def _call():
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", video_path],
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+        return float(json.loads(result.stdout)["format"]["duration"])
+
+    return with_retries(_call, "ERR_FFPROBE_FAIL", "duration_check")
+
+
+def compute_num_moments_for_duration(duration_seconds):
+    """Scales how many short clips we try to extract with the source
+    video's length — a 60-minute video has far more usable moments than
+    a 12-minute one, so always capping at a fixed 3 wastes most of a long
+    video's content. Roughly 1 moment per 10 minutes of source, bounded
+    to a sane range so very short or very long videos still behave
+    reasonably (2 minimum, 6 maximum to keep a single run's Groq usage
+    and render time bounded)."""
+    minutes = duration_seconds / 60
+    return max(2, min(6, round(minutes / 10)))
+
 
 def get_video_dimensions(video_path):
     def _call():
@@ -466,10 +489,9 @@ def render_vertical_clip(video_path, start, end, crop_x_offset, src_width, src_h
     ]
 
     if audio_path:
-        # Input 0 = video (take video stream only), input 1 = replacement audio.
         cmd += ["-map", "0:v:0", "-map", "1:a:0"]
     else:
-        cmd += ["-map", "0:v:0", "-map", "0:a:0?"]  # ? = audio optional, don't fail if silent source
+        cmd += ["-map", "0:v:0", "-map", "0:a:0?"]
 
     cmd += [
         "-c:v", "libx264", "-preset", "medium", "-crf", "20",
@@ -518,7 +540,7 @@ def find_hindi_audio_track_index(video_path):
     for i, s in enumerate(audio_streams):
         lang = s.get("tags", {}).get("language", "").lower()
         if lang in ("hi", "hin", "hindi"):
-            return i  # position among audio streams, for ffmpeg's a:N selector
+            return i
 
     print("No Hindi audio track found on this video — English-only short will be published.")
     return None
@@ -640,7 +662,7 @@ def upload_file_to_drive(drive_service, local_path, filename, folder_id, descrip
     mimetype = "video/mp4" if local_path.endswith(".mp4") else "text/plain"
     body = {"name": filename, "parents": [folder_id]}
     if description:
-        body["description"] = description[:4000]  # Drive description field has a length cap
+        body["description"] = description[:4000]
 
     def _call():
         media = MediaFileUpload(local_path, mimetype=mimetype, resumable=True)
@@ -662,7 +684,7 @@ def deliver_clip_to_drive(drive_service, video_path, base_filename, title, descr
         drive_service, video_path, f"{base_filename}.mp4", folder_id,
     )
     if not video_uploaded:
-        return None  # already logged
+        return None
 
     notes_path = video_path + ".notes.txt"
     with open(notes_path, "w", encoding="utf-8") as f:
@@ -674,27 +696,46 @@ def deliver_clip_to_drive(drive_service, video_path, base_filename, title, descr
 
 
 # ---------------------------------------------------------------------------
-# Pairing Drive files with queued state entries (see module docstring)
+# Matching Drive files to queued state entries by video ID in the filename
 # ---------------------------------------------------------------------------
+#
+# Scout instructs the operator to name each uploaded file "{video_id}.mp4"
+# (see scout_monitor.py). This matches files to their queued record by
+# actual identity, not upload order — safe even if the operator uploads
+# several videos at once, in any order. A file whose name doesn't contain
+# a recognized, still-queued video ID is left untouched and flagged, never
+# silently processed as if it were a different video.
 
-def pair_incoming_files_with_queued_videos(incoming_files, processed_videos):
-    queued = [
-        (vid, info) for vid, info in processed_videos.items()
-        if info.get("status") == "queued"
-    ]
-    queued.sort(key=lambda x: x[1].get("queued_at", ""))
+def match_incoming_files_to_queued_videos(incoming_files, processed_videos):
+    queued_ids = {vid for vid, info in processed_videos.items() if info.get("status") == "queued"}
 
-    if len(incoming_files) != len(queued):
-        log_pipeline_error(
-            "ERR_INCOMING_QUEUE_MISMATCH",
-            "pairing",
-            f"{len(incoming_files)} file(s) in 'incoming' but {len(queued)} 'queued' entries in state. "
-            f"Processing what can be safely paired; the rest will be picked up next run.",
-        )
+    matches_per_file = {}
+    for f in incoming_files:
+        found = [vid for vid in queued_ids if vid in f["name"]]
+        matches_per_file[f["id"]] = found
 
     pairs = []
-    for i in range(min(len(incoming_files), len(queued))):
-        pairs.append((incoming_files[i], queued[i]))
+    for f in incoming_files:
+        found = matches_per_file[f["id"]]
+        if len(found) == 0:
+            log_pipeline_error(
+                "ERR_UNRECOGNIZED_INCOMING_FILE", "matching",
+                f"File '{f['name']}' in 'incoming' doesn't match any queued video ID. "
+                f"Expected filename format: {{video_id}}.mp4 (see the daily Scout email). "
+                f"Left untouched — not processed.",
+            )
+            continue
+        if len(found) > 1:
+            log_pipeline_error(
+                "ERR_AMBIGUOUS_INCOMING_FILE", "matching",
+                f"File '{f['name']}' matches multiple queued video IDs ({found}) — "
+                f"can't tell which one it is. Left untouched — not processed. "
+                f"Rename it to exactly one video ID + .mp4 to resolve.",
+            )
+            continue
+        video_id = found[0]
+        pairs.append((f, (video_id, processed_videos[video_id])))
+
     return pairs
 
 
@@ -713,9 +754,8 @@ def process_one_video(drive_service, drive_file, queued_entry):
         print(f"Processing '{video_info['title']}' (Drive file: {drive_file['name']})")
 
         if not download_drive_file(drive_service, drive_file["id"], raw_path):
-            return False  # error already logged
+            return False
 
-        # Extract audio for transcription (smaller upload to Groq than the full video).
         # 32kbps mono is plenty for speech transcription (not the final output
         # audio quality) and keeps even long videos safely under Groq's free-tier
         # 25MB per-file limit: a 60-minute video at 32kbps mono is ~14MB.
@@ -727,7 +767,7 @@ def process_one_video(drive_service, drive_file, queued_entry):
             return False
 
         audio_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
-        if audio_size_mb > 24:  # stay safely under Groq's 25MB free-tier limit
+        if audio_size_mb > 24:
             log_pipeline_error(
                 "ERR_AUDIO_TOO_LARGE_FOR_TRANSCRIPTION", "process_video",
                 f"Extracted audio is {audio_size_mb:.1f}MB, exceeds Groq's 25MB free-tier limit. "
@@ -737,23 +777,32 @@ def process_one_video(drive_service, drive_file, queued_entry):
 
         transcript = transcribe_audio(audio_path)
         if not transcript:
-            return False  # error already logged
+            return False
 
         segments = transcript.get("segments", [])
-        moments = pick_moments_with_llm(segments)
-        if not moments:
-            return False  # error already logged
 
         src_width, src_height = get_video_dimensions(raw_path)
         if not src_width:
-            return False  # error already logged
+            return False
+
+        duration_seconds = get_video_duration_seconds(raw_path)
+        if duration_seconds:
+            num_moments = compute_num_moments_for_duration(duration_seconds)
+            print(f"Source video is {duration_seconds/60:.1f} min long — targeting {num_moments} moment(s).")
+        else:
+            num_moments = NUM_MOMENTS
+            print(f"Could not determine video duration — defaulting to {num_moments} moment(s).")
+
+        moments = pick_moments_with_llm(segments, num_moments=num_moments)
+        if not moments:
+            return False
 
         hindi_track_idx = find_hindi_audio_track_index(raw_path)
         hindi_audio_full_path = None
         if hindi_track_idx is not None:
             hindi_audio_full_path = os.path.join(run_dir, "hindi_full.aac")
             if not extract_audio_track(raw_path, hindi_track_idx, hindi_audio_full_path):
-                hindi_audio_full_path = None  # extraction failed — proceed English-only, already logged
+                hindi_audio_full_path = None
 
         delivered_clips = []
         video_slug = re.sub(r"[^a-zA-Z0-9]+", "_", video_info["title"])[:40].strip("_")
@@ -761,7 +810,6 @@ def process_one_video(drive_service, drive_file, queued_entry):
         for i, moment in enumerate(moments):
             crop_offset = compute_crop_x_offset(raw_path, moment["start"], moment["end"], src_width, src_height)
 
-            # English version
             en_output = os.path.join(run_dir, f"moment_{i}_en.mp4")
             if render_vertical_clip(raw_path, moment["start"], moment["end"], crop_offset,
                                      src_width, src_height, en_output):
@@ -772,12 +820,10 @@ def process_one_video(drive_service, drive_file, queued_entry):
                                                  DRIVE_OUTPUT_FOLDER_ID)
                 if file_id:
                     delivered_clips.append(("en", base_name))
-                os.remove(en_output)  # immediate cleanup — runner disk is limited
+                os.remove(en_output)
 
-            # Hindi version (only if a Hindi track exists for this source video)
             if hindi_audio_full_path:
                 hi_segment_audio = os.path.join(run_dir, f"moment_{i}_hi_audio.aac")
-                # Cut the matching time segment out of the full Hindi audio track.
                 cut_cmd = ["ffmpeg", "-y", "-ss", str(moment["start"]), "-i", hindi_audio_full_path,
                            "-t", str(moment["end"] - moment["start"]), "-c:a", "aac", hi_segment_audio]
                 cut_result = subprocess.run(cut_cmd, capture_output=True, text=True, timeout=120)
@@ -804,9 +850,6 @@ def process_one_video(drive_service, drive_file, queued_entry):
             return False
 
         if not move_drive_file_to_processed(drive_service, drive_file["id"]):
-            # Non-fatal: clips are delivered, but the raw file wasn't moved.
-            # Logged already; leave state as "queued" so it's investigated,
-            # not silently marked done while sitting in the wrong folder.
             return False
 
         video_info["status"] = "done"
@@ -816,8 +859,6 @@ def process_one_video(drive_service, drive_file, queued_entry):
         return True
 
     finally:
-        # Always clean up local files for this video, success or failure —
-        # runner disk (~14GB) must not fill up across multiple videos in one run.
         if os.path.exists(run_dir):
             import shutil
             shutil.rmtree(run_dir, ignore_errors=True)
@@ -833,7 +874,7 @@ def main():
 
     drive_creds = get_drive_credentials()
     if not drive_creds:
-        sys.exit(1)  # already logged
+        sys.exit(1)
 
     from googleapiclient.discovery import build
     drive_service = build("drive", "v3", credentials=drive_creds)
@@ -843,10 +884,10 @@ def main():
         print("No files in 'incoming' folder. Nothing to do.")
         return
 
-    pairs = pair_incoming_files_with_queued_videos(incoming_files, processed_videos)
+    pairs = match_incoming_files_to_queued_videos(incoming_files, processed_videos)
     if not pairs:
-        print("No safely pairable (file, queued-video) combinations this run.")
-        save_json(PROCESSED_VIDEOS_FILE, processed_videos)  # in case pairing logged an error
+        print("No safely matched (file, queued-video) pairs this run.")
+        save_json(PROCESSED_VIDEOS_FILE, processed_videos)
         return
 
     any_state_changed = False
@@ -854,8 +895,6 @@ def main():
         success = process_one_video(drive_service, drive_file, queued_entry)
         if success:
             any_state_changed = True
-        # Persist state after every video, not just at the end — if a later
-        # video in the same run crashes, earlier successes aren't lost.
         save_json(PROCESSED_VIDEOS_FILE, processed_videos)
 
     if any_state_changed:
