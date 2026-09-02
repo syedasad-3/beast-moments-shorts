@@ -166,5 +166,11 @@
     "stage": "matching",
     "message": "File 'Escape 100 Cops, Win $500,000.mp4' in 'incoming' doesn't match any queued video ID. Expected filename format: {video_id}.mp4 (see the daily Scout email). Left untouched — not processed.",
     "timestamp": "2026-09-02T00:02:03.646942+00:00"
+  },
+  {
+    "error_code": "ERR_UNRECOGNIZED_INCOMING_FILE",
+    "stage": "matching",
+    "message": "File 'Escape 100 Cops, Win $500,000.mp4' in 'incoming' doesn't match any queued video ID. Expected filename format: {video_id}.mp4 (see the daily Scout email). Left untouched — not processed.",
+    "timestamp": "2026-09-02T03:02:00.795966+00:00"
   }
 ]
