@@ -1,1 +1,32 @@
-[]
+[
+  {
+    "error_code": "ERR_FACE_DETECTOR_INIT_FAIL",
+    "stage": "crop_detection",
+    "message": "libEGL.so.1: cannot open shared object file: No such file or directory",
+    "timestamp": "2026-09-05T06:02:02.500369+00:00"
+  },
+  {
+    "error_code": "ERR_DRIVE_OUTPUT_UPLOAD_FAIL",
+    "stage": "drive_output_upload",
+    "message": "All 3 attempts failed: <HttpError 403 when requesting None returned \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\". Details: \"[{'message': 'Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://sup",
+    "timestamp": "2026-09-05T06:02:30.025006+00:00"
+  },
+  {
+    "error_code": "ERR_FACE_DETECTOR_INIT_FAIL",
+    "stage": "crop_detection",
+    "message": "libEGL.so.1: cannot open shared object file: No such file or directory",
+    "timestamp": "2026-09-05T06:02:30.025810+00:00"
+  },
+  {
+    "error_code": "ERR_DRIVE_OUTPUT_UPLOAD_FAIL",
+    "stage": "drive_output_upload",
+    "message": "All 3 attempts failed: <HttpError 403 when requesting None returned \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\". Details: \"[{'message': 'Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://sup",
+    "timestamp": "2026-09-05T06:02:58.653268+00:00"
+  },
+  {
+    "error_code": "ERR_NO_CLIPS_DELIVERED",
+    "stage": "process_video",
+    "message": "All render/upload attempts failed for 'Escape 100 Cops, Win $500,000'.",
+    "timestamp": "2026-09-05T06:02:58.653705+00:00"
+  }
+]
