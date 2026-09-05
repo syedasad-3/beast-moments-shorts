@@ -28,5 +28,35 @@
     "stage": "process_video",
     "message": "All render/upload attempts failed for 'Escape 100 Cops, Win $500,000'.",
     "timestamp": "2026-09-05T06:02:58.653705+00:00"
+  },
+  {
+    "error_code": "ERR_FACE_DETECTOR_INIT_FAIL",
+    "stage": "crop_detection",
+    "message": "libEGL.so.1: cannot open shared object file: No such file or directory",
+    "timestamp": "2026-09-05T09:02:01.056526+00:00"
+  },
+  {
+    "error_code": "ERR_DRIVE_OUTPUT_UPLOAD_FAIL",
+    "stage": "drive_output_upload",
+    "message": "All 3 attempts failed: <HttpError 403 when requesting None returned \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\". Details: \"[{'message': 'Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://sup",
+    "timestamp": "2026-09-05T09:02:30.638451+00:00"
+  },
+  {
+    "error_code": "ERR_FACE_DETECTOR_INIT_FAIL",
+    "stage": "crop_detection",
+    "message": "libEGL.so.1: cannot open shared object file: No such file or directory",
+    "timestamp": "2026-09-05T09:02:30.639326+00:00"
+  },
+  {
+    "error_code": "ERR_DRIVE_OUTPUT_UPLOAD_FAIL",
+    "stage": "drive_output_upload",
+    "message": "All 3 attempts failed: <HttpError 403 when requesting None returned \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\". Details: \"[{'message': 'Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://sup",
+    "timestamp": "2026-09-05T09:03:05.086531+00:00"
+  },
+  {
+    "error_code": "ERR_NO_CLIPS_DELIVERED",
+    "stage": "process_video",
+    "message": "All render/upload attempts failed for 'Escape 100 Cops, Win $500,000'.",
+    "timestamp": "2026-09-05T09:03:05.086902+00:00"
   }
 ]
