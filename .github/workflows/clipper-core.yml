@@ -20,11 +20,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Ensure ffmpeg is available
+      - name: Install system dependencies
         run: |
-          if ! command -v ffmpeg &> /dev/null; then
-            sudo apt-get update && sudo apt-get install -y ffmpeg
-          fi
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libegl1 libgl1 libopengl0
           ffmpeg -version | head -1
       - name: Install Python dependencies
         run: |
