@@ -2,25 +2,53 @@
 Scout + Monitor — runs daily on GitHub Actions (schedule/workflow_dispatch only).
 
 What it does:
-  1. Checks MrBeast's channel for the most recent long-form (non-Short) video.
-  2. Compares against state/processed_videos.json to avoid re-notifying
-     the same video.
-  3. If a new video is found, sends an email with the link and instructs
-     the operator to download it and upload it to the Drive "incoming" folder.
+  1. Checks whether a video is already queued (emailed, but not yet
+     downloaded/uploaded by the operator). If so, that's the ONLY video
+     this run will talk about — Scout reminds the operator about it
+     instead of searching for and queuing a different one. This keeps
+     exactly one video pending at a time, so the queue can never grow
+     faster than the operator can act on it.
+  2. Only if nothing is currently queued does Scout look for a video to
+     queue: it prefers MrBeast's most recent long-form (non-Short)
+     upload if unprocessed; if there's no new upload, it falls back to
+     scanning older uploads (newest-to-oldest) for the most recent one
+     that still hasn't been processed — so the pipeline always has
+     something to work on instead of sitting idle waiting for a brand
+     new video.
+  3. Either way, if there's a video to talk about, sends an email with
+     the link and instructs the operator to download it and upload it to
+     the Drive "incoming" folder.
   4. Also checks state/pipeline_errors.json for errors reported by other
-     pipeline stages (which don't exist yet in early phases — this file
-     will just be empty/absent for now) and includes them in the same email.
+     pipeline stages and includes them in the same email, regardless of
+     which video path was taken above.
   5. Commits state changes back to the repo (GitHub Actions runners are
      ephemeral — state must be persisted in git, not left on disk).
 
 Design notes (why it's built this way):
-  - Only emails when there's something new to report (a new video OR an
+  - Only emails when there's something new to report (a video OR an
     error) — no daily spam when nothing changed.
   - Does NOT mark a video as "queued" in state until the email has
     actually sent successfully. If SMTP fails, the same video will be
     picked up again next run instead of being silently skipped forever.
+  - A reminder about an already-queued video never touches
+    processed_videos.json or the YouTube API at all — there's nothing
+    new to record, and no need to spend API quota searching while a
+    video is already waiting on the operator.
   - Shorts (<3 min) are filtered out — this pipeline repurposes long-form
     videos, not the channel's own Shorts.
+  - Backlog fallback deliberately needs no separate "how far we've
+    scanned" cursor: processed_videos.json already records every video
+    ever queued (new-upload or backlog), so each search naturally skips
+    everything already handled and lands on the next
+    most-recent-but-untouched video, moving steadily from newest toward
+    oldest over time. A stored page-token cursor would be fragile here —
+    it would drift out of sync every time a genuinely new video gets
+    added at the top of the channel, shifting every older video's
+    position by one.
+  - The backlog scan is capped at MAX_VIDEOS_TO_SCAN per run purely as a
+    safety limit on API quota/runtime — not expected to be hit in normal
+    operation, but without it, a channel that's been fully processed
+    would cause every run to page through the entire upload history.
 """
 
 import json
@@ -42,6 +70,7 @@ except ImportError:
 
 MRBEAST_CHANNEL_ID = "UCX6OQ3DkcsbYNE6H8uQQuVA"  # public, stable identifier
 MIN_VIDEO_DURATION_SECONDS = 180  # filters out Shorts / trailers
+MAX_VIDEOS_TO_SCAN = 500  # safety cap on how deep one run will page into the back catalog
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE_DIR = os.path.join(REPO_ROOT, "state")
 PROCESSED_VIDEOS_FILE = os.path.join(STATE_DIR, "processed_videos.json")
@@ -100,6 +129,29 @@ def with_retries(fn, error_code, *args, **kwargs):
     sys.exit(1)
 
 
+def find_pending_queued_video(processed_videos):
+    """Returns the oldest still-queued video (the one that's been waiting
+    longest for the operator to download/upload), or None if nothing is
+    currently queued. Scout reminds about this video instead of searching
+    for a new one whenever one exists, so the queue never grows past a
+    single pending video."""
+    queued = [
+        {"video_id": vid, **info}
+        for vid, info in processed_videos.items()
+        if info.get("status") == "queued"
+    ]
+    if not queued:
+        return None
+    queued.sort(key=lambda v: v.get("queued_at", ""))  # oldest first
+    oldest = queued[0]
+    return {
+        "video_id": oldest["video_id"],
+        "title": oldest["title"],
+        "url": oldest["url"],
+        "duration_seconds": oldest.get("duration_seconds", 0),  # older entries may predate this field
+    }
+
+
 def get_uploads_playlist_id(youtube):
     def _call():
         resp = youtube.channels().list(part="contentDetails", id=MRBEAST_CHANNEL_ID).execute()
@@ -111,14 +163,19 @@ def get_uploads_playlist_id(youtube):
     return with_retries(_call, "ERR_YT_CHANNEL_LOOKUP_FAIL")
 
 
-def get_recent_video_candidates(youtube, uploads_playlist_id, max_results=10):
+def get_video_candidates_page(youtube, uploads_playlist_id, page_token=None):
+    """Fetches one page (up to 50, the API max) of the uploads playlist,
+    in the API's default order — newest upload first. Returns the raw
+    response dict (items + nextPageToken) so the caller can page through
+    as many videos as it needs."""
+
     def _call():
-        resp = youtube.playlistItems().list(
+        return youtube.playlistItems().list(
             part="contentDetails,snippet",
             playlistId=uploads_playlist_id,
-            maxResults=max_results,
+            maxResults=50,
+            pageToken=page_token,
         ).execute()
-        return resp.get("items", [])
 
     return with_retries(_call, "ERR_YT_PLAYLIST_FETCH_FAIL")
 
@@ -143,32 +200,63 @@ def parse_iso8601_duration_to_seconds(duration):
 
 
 def find_next_unprocessed_video(youtube, processed_videos):
+    """Returns the most recent not-yet-processed, non-Short MrBeast video —
+    checking the newest upload first and paging progressively further back
+    into the channel's history if needed. A genuinely brand-new upload is
+    just the special case where the very first candidate checked happens
+    to be unprocessed; if it isn't (already done, or filtered out), this
+    keeps going back in time through the back catalog rather than giving
+    up, so the pipeline is never left with nothing to do just because
+    MrBeast hasn't posted today.
+
+    Only called when nothing is currently queued (see
+    find_pending_queued_video) — so every candidate this sees that isn't
+    in processed_videos is genuinely available to queue.
+
+    Returns None if nothing usable was found within MAX_VIDEOS_TO_SCAN
+    (either the channel's entire history was scanned, or the safety cap
+    was hit first — both are logged so it's clear which happened)."""
     uploads_playlist_id = get_uploads_playlist_id(youtube)
-    candidates = get_recent_video_candidates(youtube, uploads_playlist_id)
 
-    if not candidates:
-        return None
+    scanned = 0
+    page_token = None
 
-    video_ids = [c["contentDetails"]["videoId"] for c in candidates]
-    durations = get_video_durations(youtube, video_ids)
+    while scanned < MAX_VIDEOS_TO_SCAN:
+        resp = get_video_candidates_page(youtube, uploads_playlist_id, page_token)
+        items = resp.get("items", [])
+        if not items:
+            print(f"Reached the end of the channel's upload history after scanning {scanned} video(s).")
+            return None
 
-    # Candidates are already newest-first from the uploads playlist.
-    for c in candidates:
-        vid = c["contentDetails"]["videoId"]
-        if vid in processed_videos:
-            continue
-        duration_str = durations.get(vid, "PT0S")
-        duration_seconds = parse_iso8601_duration_to_seconds(duration_str)
-        if duration_seconds < MIN_VIDEO_DURATION_SECONDS:
-            continue  # skip Shorts
-        return {
-            "video_id": vid,
-            "title": c["snippet"]["title"],
-            "url": f"https://www.youtube.com/watch?v={vid}",
-            "duration_seconds": duration_seconds,
-        }
+        video_ids = [c["contentDetails"]["videoId"] for c in items]
+        durations = get_video_durations(youtube, video_ids)
 
-    return None  # nothing new to process
+        for c in items:
+            vid = c["contentDetails"]["videoId"]
+            scanned += 1
+            if vid in processed_videos:
+                continue
+            duration_str = durations.get(vid, "PT0S")
+            duration_seconds = parse_iso8601_duration_to_seconds(duration_str)
+            if duration_seconds < MIN_VIDEO_DURATION_SECONDS:
+                continue  # skip Shorts
+            return {
+                "video_id": vid,
+                "title": c["snippet"]["title"],
+                "url": f"https://www.youtube.com/watch?v={vid}",
+                "duration_seconds": duration_seconds,
+            }
+
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            print(f"Reached the end of the channel's upload history after scanning {scanned} video(s).")
+            return None
+
+    print(
+        f"Scanned {scanned} videos (the MAX_VIDEOS_TO_SCAN safety limit) without finding an "
+        f"unprocessed one. If this happens repeatedly, raise MAX_VIDEOS_TO_SCAN in scout_monitor.py."
+    )
+    return None
 
 
 def send_email(subject, body):
@@ -199,27 +287,32 @@ def send_email(subject, body):
     return False
 
 
-def build_email_body(new_video, errors):
+def build_email_body(video, errors, is_reminder):
     lines = []
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     lines.append(f"Beast Moments Shorts — Daily Update ({today})")
     lines.append("")
 
-    if new_video:
-        mins = new_video["duration_seconds"] // 60
-        lines.append("NEW VIDEO TO DOWNLOAD:")
-        lines.append(f"  Title: {new_video['title']}")
-        lines.append(f"  Length: ~{mins} min")
-        lines.append(f"  Link: {new_video['url']}")
+    if video:
+        header = "STILL WAITING — PLEASE DOWNLOAD & UPLOAD THIS VIDEO:" if is_reminder else "NEW VIDEO TO DOWNLOAD:"
+        lines.append(header)
+        lines.append(f"  Title: {video['title']}")
+        if video.get("duration_seconds"):
+            mins = video["duration_seconds"] // 60
+            lines.append(f"  Length: ~{mins} min")
+        lines.append(f"  Link: {video['url']}")
         lines.append("")
-        lines.append(f"IMPORTANT: after downloading, rename the file to exactly: {new_video['video_id']}.mp4")
+        lines.append(f"IMPORTANT: after downloading, rename the file to exactly: {video['video_id']}.mp4")
         lines.append("(This lets the pipeline identify which video it is, no matter what order you upload things in.)")
         lines.append("")
         lines.append("Then upload it to the 'incoming' Drive folder:")
         lines.append(f"  https://drive.google.com/drive/folders/{DRIVE_INCOMING_FOLDER_ID}")
         lines.append("")
+        if is_reminder:
+            lines.append("(No new video will be queued until this one is uploaded and processed.)")
+            lines.append("")
     else:
-        lines.append("No new video to download today.")
+        lines.append("No video available to queue today (checked latest uploads and back catalog).")
         lines.append("")
 
     if errors:
@@ -233,29 +326,37 @@ def build_email_body(new_video, errors):
 
 
 def main():
-    if not YT_API_KEY:
-        print("ERR_MISSING_CONFIG: YT_API_KEY environment variable not set.")
-        sys.exit(1)
-
     processed_videos = load_json(PROCESSED_VIDEOS_FILE, {})
     pipeline_errors = load_json(PIPELINE_ERRORS_FILE, [])
 
-    youtube = build("youtube", "v3", developerKey=YT_API_KEY)
-    new_video = find_next_unprocessed_video(youtube, processed_videos)
+    pending = find_pending_queued_video(processed_videos)
+    video = pending
+    is_new_video = False
 
-    if not new_video and not pipeline_errors:
+    if pending:
+        print(f"A video is already queued and waiting to be uploaded ('{pending['title']}') — "
+              f"reminding instead of searching for a new one.")
+    else:
+        if not YT_API_KEY:
+            print("ERR_MISSING_CONFIG: YT_API_KEY environment variable not set.")
+            sys.exit(1)
+        youtube = build("youtube", "v3", developerKey=YT_API_KEY)
+        video = find_next_unprocessed_video(youtube, processed_videos)
+        is_new_video = video is not None
+
+    if not video and not pipeline_errors:
         print("Nothing new to report today. No email sent.")
         return
 
     subject = "Beast Moments Shorts — Daily Update"
-    if new_video and pipeline_errors:
-        subject += " (new video + alerts)"
-    elif new_video:
-        subject += " (new video)"
+    if video and pipeline_errors:
+        subject += " (reminder + alerts)" if pending else " (new video + alerts)"
+    elif video:
+        subject += " (reminder)" if pending else " (new video)"
     else:
         subject += " (alerts only)"
 
-    body = build_email_body(new_video, pipeline_errors)
+    body = build_email_body(video, pipeline_errors, is_reminder=bool(pending))
     sent = send_email(subject, body)
 
     if not sent:
@@ -265,16 +366,17 @@ def main():
 
     state_changed = False
 
-    if new_video:
-        processed_videos[new_video["video_id"]] = {
+    if is_new_video:
+        processed_videos[video["video_id"]] = {
             "status": "queued",
-            "title": new_video["title"],
-            "url": new_video["url"],
+            "title": video["title"],
+            "url": video["url"],
+            "duration_seconds": video["duration_seconds"],
             "queued_at": datetime.now(timezone.utc).isoformat(),
         }
         save_json(PROCESSED_VIDEOS_FILE, processed_videos)
         state_changed = True
-        print(f"Emailed and queued: {new_video['title']}")
+        print(f"Emailed and queued: {video['title']}")
 
     if pipeline_errors:
         # Errors have now been reported via email — clear them so they
