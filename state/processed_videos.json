@@ -17,10 +17,17 @@
     "processed_at": "2026-09-07T10:36:57.383022+00:00"
   },
   "Af6i6ChAVTw": {
-    "status": "queued",
+    "status": "done",
     "title": "Last To Leave Mansion, Keeps It",
     "url": "https://www.youtube.com/watch?v=Af6i6ChAVTw",
-    "queued_at": "2026-08-28T21:55:31.330613+00:00"
+    "queued_at": "2026-08-28T21:55:31.330613+00:00",
+    "delivered_clips": [
+      [
+        "en",
+        "Last_To_Leave_Mansion_Keeps_It_moment0_EN"
+      ]
+    ],
+    "processed_at": "2026-09-07T18:05:19.166553+00:00"
   },
   "lVylRtlPOIE": {
     "status": "queued",
