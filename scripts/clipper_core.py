@@ -572,28 +572,48 @@ def extract_audio_track(video_path, audio_stream_index, output_path):
 # ---------------------------------------------------------------------------
 
 def get_drive_credentials():
-    """Uses a Service Account (not user OAuth) for Drive access. This
-    avoids the drive.file scope's fundamental limitation — it can only
-    see files the app itself created, never files a human manually
-    uploaded via the Drive website. Service accounts are granted access
-    by explicitly sharing folders with them, which sidesteps that
-    restriction entirely and needs no OAuth consent-screen verification."""
-    from google.oauth2 import service_account
+    """Uses OAuth 2.0 user credentials for the operator's own Google
+    account — NOT a Service Account.
 
-    service_account_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if not service_account_json:
-        log_pipeline_error("ERR_MISSING_CONFIG", "drive_auth", "GOOGLE_SERVICE_ACCOUNT_JSON not set.")
+    Why: Service Accounts have zero Drive storage quota and cannot own
+    newly created files. Uploads to 'ready_to_upload' failed in
+    production with a 403 storageQuotaExceeded error the moment the
+    pipeline tried to CREATE a new file there (listing/downloading from
+    'incoming' and moving files to 'processed' worked fine, since neither
+    of those operations creates a new file owned by the service account).
+    Google's own fix for this is to use a Shared Drive instead — but
+    Shared Drives are a Google Workspace-only feature and aren't
+    available on personal Gmail accounts, which is what this project
+    uses. So instead we authenticate as the operator's real account via a
+    long-lived OAuth refresh token: uploaded files are then owned by the
+    operator, using their normal (non-zero) Drive quota.
+
+    The refresh token was generated once, manually, via Google's OAuth
+    Playground (see project docs) — it does not expire on its own and
+    lets this script silently mint new short-lived access tokens on every
+    run without any further human interaction."""
+    from google.oauth2.credentials import Credentials
+
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
+    refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN")
+
+    if not (client_id and client_secret and refresh_token):
+        log_pipeline_error(
+            "ERR_MISSING_CONFIG", "drive_auth",
+            "GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, or "
+            "GOOGLE_OAUTH_REFRESH_TOKEN not set.",
+        )
         return None
 
     try:
-        info = json.loads(service_account_json)
-    except json.JSONDecodeError as e:
-        log_pipeline_error("ERR_INVALID_CONFIG", "drive_auth", f"GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON: {e}")
-        return None
-
-    try:
-        creds = service_account.Credentials.from_service_account_info(
-            info, scopes=["https://www.googleapis.com/auth/drive"],
+        creds = Credentials(
+            token=None,  # no cached access token yet — library fetches one on first use
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=["https://www.googleapis.com/auth/drive"],
         )
         return creds
     except Exception as e:
