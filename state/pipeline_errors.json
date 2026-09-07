@@ -1,1 +1,8 @@
-[]
+[
+  {
+    "error_code": "ERR_NO_VALID_MOMENTS",
+    "stage": "pick_moments",
+    "message": "LLM returned no usable moments after validation (all filtered out).",
+    "timestamp": "2026-09-07T15:03:56.782740+00:00"
+  }
+]
