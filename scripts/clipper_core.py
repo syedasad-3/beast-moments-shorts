@@ -5,10 +5,11 @@ Pulls the next raw video from Drive's "incoming" folder, transcribes it,
 picks the best short-form moments, renders vertical face-tracked clips,
 attaches MrBeast's official Hindi dub track where available, and delivers
 the finished clips to Drive's "ready_to_upload" folder (with a suggested
-title/description per clip) for the operator to manually download and
-publish to YouTube themselves. The raw source file is then moved to
-"processed" in Drive. This pipeline never calls the YouTube API — YouTube
-publishing stays a fully manual, human step by design.
+title/description/hashtags/tags/posting-time per clip) for the operator
+to manually download and publish to YouTube themselves. The raw source
+file is then moved to "processed" in Drive. This pipeline never calls the
+YouTube API — YouTube publishing stays a fully manual, human step by
+design.
 
 Matching raw Drive files with queued videos:
   Scout writes an entry with status "queued" to state/processed_videos.json
@@ -48,6 +49,80 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 DRIVE_INCOMING_FOLDER_ID = os.environ.get("DRIVE_INCOMING_FOLDER_ID")
 DRIVE_PROCESSED_FOLDER_ID = os.environ.get("DRIVE_PROCESSED_FOLDER_ID")
 DRIVE_OUTPUT_FOLDER_ID = os.environ.get("DRIVE_OUTPUT_FOLDER_ID")
+
+# ---------------------------------------------------------------------------
+# Publishing metadata helpers (tags, hashtags, suggested posting time)
+# ---------------------------------------------------------------------------
+#
+# These are written into each clip's companion .txt file so the operator
+# has everything needed to publish on YouTube without retyping anything.
+# The posting-time suggestion is deliberately labeled as a general
+# best-practice benchmark, not a personalized recommendation — a brand
+# new channel has no viewer-analytics history yet for that to be based
+# on. Once real data exists, YouTube Studio's own "When your viewers are
+# on YouTube" report (Studio > Audience) will be more accurate than any
+# fixed suggestion here.
+
+BASE_TAGS = [
+    "mrbeast", "mr beast", "beast moments", "mrbeast shorts", "viral shorts",
+    "best moments", "mrbeast clips", "giveaway", "shorts", "trending shorts",
+    "mrbeast highlights", "beast philanthropy",
+]
+
+TAG_STOPWORDS = {
+    "the", "a", "an", "to", "of", "in", "on", "for", "and", "with",
+    "is", "this", "it", "i", "his", "her", "their", "our", "your",
+}
+
+HASHTAGS_BY_LANG = {
+    "en": "#Shorts #MrBeast #BeastMoments #Viral",
+    "hi": "#Shorts #MrBeast #BeastMomentsHindi #Viral",
+}
+
+SUGGESTED_POSTING_TIME_BY_LANG = {
+    "en": "6:00\u20139:00 PM (your target audience's local evening)",
+    "hi": "7:00\u201310:00 PM PKT/IST (South Asia evening peak)",
+}
+
+POSTING_TIME_DISCLAIMER = (
+    "General best-practice benchmark — this channel has no view history yet to "
+    "personalize it further. Once you have some videos published, check YouTube "
+    "Studio > Audience > \"When your viewers are on YouTube\" and use that instead."
+)
+
+
+def build_tags_for_clip(title):
+    """Returns a comma-separated tag string: the channel's branded base
+    tags plus a few keywords pulled from this specific clip's title, so
+    every clip gets some tag specificity beyond the generic set."""
+    words = re.findall(r"[A-Za-z0-9]+", title.lower())
+    title_keywords = [w for w in words if len(w) > 3 and w not in TAG_STOPWORDS][:5]
+
+    seen = set()
+    ordered = []
+    for tag in BASE_TAGS + title_keywords:
+        if tag not in seen:
+            seen.add(tag)
+            ordered.append(tag)
+    return ", ".join(ordered)
+
+
+def build_notes_text(title, description, lang):
+    """Builds the full content of a clip's companion .txt file: title,
+    description, hashtags, tags, and a suggested posting time — everything
+    the operator needs to publish the clip without retyping anything."""
+    tags = build_tags_for_clip(title)
+    hashtags = HASHTAGS_BY_LANG.get(lang, HASHTAGS_BY_LANG["en"])
+    posting_time = SUGGESTED_POSTING_TIME_BY_LANG.get(lang, SUGGESTED_POSTING_TIME_BY_LANG["en"])
+
+    return (
+        f"Suggested title:\n{title}\n\n"
+        f"Suggested description:\n{description}\n\n"
+        f"Suggested hashtags:\n{hashtags}\n\n"
+        f"Suggested tags (paste into YouTube's Tags field):\n{tags}\n\n"
+        f"Suggested posting time:\n{posting_time}\n"
+        f"({POSTING_TIME_DISCLAIMER})\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -696,10 +771,11 @@ def upload_file_to_drive(drive_service, local_path, filename, folder_id, descrip
     return result
 
 
-def deliver_clip_to_drive(drive_service, video_path, base_filename, title, description, folder_id):
+def deliver_clip_to_drive(drive_service, video_path, base_filename, title, description, folder_id, lang):
     """Uploads the rendered clip plus a companion .txt file containing the
-    suggested title/description, so the operator has everything needed to
-    publish it on YouTube without retyping anything."""
+    suggested title/description/hashtags/tags/posting-time, so the
+    operator has everything needed to publish it on YouTube without
+    retyping anything."""
     video_uploaded = upload_file_to_drive(
         drive_service, video_path, f"{base_filename}.mp4", folder_id,
     )
@@ -708,7 +784,7 @@ def deliver_clip_to_drive(drive_service, video_path, base_filename, title, descr
 
     notes_path = video_path + ".notes.txt"
     with open(notes_path, "w", encoding="utf-8") as f:
-        f.write(f"Suggested title:\n{title}\n\nSuggested description:\n{description}\n")
+        f.write(build_notes_text(title, description, lang))
     upload_file_to_drive(drive_service, notes_path, f"{base_filename}.txt", folder_id)
     os.remove(notes_path)
 
@@ -837,7 +913,7 @@ def process_one_video(drive_service, drive_file, queued_entry):
                 description = f"Clip from: {video_info['url']}\n\n{moment.get('reason', '')}"
                 base_name = f"{video_slug}_moment{i}_EN"
                 file_id = deliver_clip_to_drive(drive_service, en_output, base_name, title, description,
-                                                 DRIVE_OUTPUT_FOLDER_ID)
+                                                 DRIVE_OUTPUT_FOLDER_ID, lang="en")
                 if file_id:
                     delivered_clips.append(("en", base_name))
                 os.remove(en_output)
@@ -855,7 +931,7 @@ def process_one_video(drive_service, drive_file, queued_entry):
                         description = f"Clip from: {video_info['url']}\n\n{moment.get('reason', '')}"
                         base_name = f"{video_slug}_moment{i}_HI"
                         file_id = deliver_clip_to_drive(drive_service, hi_output, base_name, title_hi, description,
-                                                         DRIVE_OUTPUT_FOLDER_ID)
+                                                         DRIVE_OUTPUT_FOLDER_ID, lang="hi")
                         if file_id:
                             delivered_clips.append(("hi", base_name))
                         os.remove(hi_output)
